@@ -1,5 +1,5 @@
 
-use Test::More tests => 7;
+use Test::More tests => 9;
 
 BEGIN {use_ok('NumberedTree') };
 BEGIN {use_ok('Javascript::Menu') };
@@ -29,3 +29,9 @@ isnt($child->getUniqueId, $tree->getUniqueId, "UniqueId is different");
 
 my @lines = $tree->getHTML;
 is ($#lines, $max_level + 1, "all HTML produced");
+
+@lines = grep /<a.*>/, @lines;
+is ($#lines, $max_level, "IE6 compatible code.");
+
+@lines = grep {/<a>/} $tree->getHTML(no_ie => 'i wish');
+is ($#lines, -1, "IE6 incompatible code.");

@@ -4,3 +4,6 @@ Revision history for Perl extension Javascript::Menu.
 	- original version; created by h2xs 1.22 with options
 		-AX Javascript::Menu
 
+1.01 Sun Oct 12 19:28:23 2003
+	Removed the useBytes stuff. Useless.
+	Added support for highlighting selected item.

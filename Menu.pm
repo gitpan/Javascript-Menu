@@ -1,20 +1,19 @@
 package Javascript::Menu;
 
 use strict;
-require bytes;
 
 use CGI;
 use NumberedTree;
 
 use constant DEFAULT_STYLES => {caption => 'caption', 
-				Mmenu => 'Mmenu', Smenu => 'Smenu'};
+				Mmenu => 'Mmenu', 
+				Smenu => 'Smenu'};
 
-our $VERSION = '1.00';
+our $VERSION = '1.01';
 our @ISA = qw(NumberedTree);
 
 # package stuff:
 my $cgi = CGI->new;    # Just for HTML shortcuts.
-my $DBTree = 1;
 
 # A default action generator. See the args passed to it:
 my $default_action = sub {
@@ -31,7 +30,6 @@ my $default_action = sub {
 #                     code to be executed on click. The sub will be called as 
 #                     a method ($self->generator) so you have access to the
 #                     object data when you construct the action.
-#            legacy_encoding - forces the use of byte semantics in this object.
 # Returns: The tree object.
 
 sub new {
@@ -45,13 +43,11 @@ sub new {
 
     if ($class = ref($parent)) {
 	$properties->{_Parent} = $parent->{_Serial};
-	$properties->{Bytes} = $parent->{Bytes} ||= 0;
 	$properties->{Action} = 
 	    (exists $args{action}) ? $args{action} : $parent->{Action};  
     } else {
 	$class = $parent;
 	$properties->{_Parent} = 0;
-	$properties->{Bytes} = $args{legacy_encoding} ||= 0;
 	$properties->{Action} = 
 	    (exists $args{action}) ? $args{action} : $default_action;  
     }
@@ -66,7 +62,6 @@ sub new {
 #     tree - the tree to be converted to a menu.
 #     action - an action generator, as described in <new>.
 #     parent - (not for the user) sets the _Parent property.
-#     legacy_encoding - forces the use of byte semantics in this object.
 # Returns: the tree, modified and re-blessed as a Javascript::Menu.
 
 sub convert {
@@ -74,8 +69,7 @@ sub convert {
     my $class = (ref($parent) or $parent);
 
     my %args = @_;
-    my ($tree, $parent_num, $legacy) = 
-	@args{'tree', 'parent', 'legacy_encoding'};
+    my ($tree, $parent_num) = @args{'tree', 'parent'};
     my $def_action = (exists $args{action}) ? $args{action} : $default_action;
     $parent_num ||= 0;
 
@@ -84,8 +78,7 @@ sub convert {
 
     for (@{ $tree->{Items} }) {
 	$parent->convert(tree => $_, action => $def_action, 
-			 parent => $tree->getNumber, 
-			 legacy_encoding => $legacy);
+			 parent => $tree->getNumber);
     }
     return bless $tree, $class;
 }
@@ -96,7 +89,6 @@ sub convert {
 #     source_name - table name.
 #     source - a DB handle to work with.
 #     action - an action generator, as described in <new>.
-#     legacy_encoding - forces the use of byte semantics in this object.
 # Returns: the tree, modified and re-blessed as a Javascript::Menu.
 
 sub readDB {
@@ -104,16 +96,14 @@ sub readDB {
     my $class = (ref($parent) or $parent);
     my %args = @_;
 
-    my ($table, $dbh, $legacy) = 
-	@args{'source_name', 'source', 'legacy_encoding'};
+    my ($table, $dbh) = @args{'source_name', 'source'};
     my $def_action = (exists $args{action}) ? $args{action} : $default_action;
     return undef unless ($table && $dbh);
 
     require NumberedTree::DBTree; 
     my $tree = NumberedTree::DBTree->read($table, $dbh);
     $tree->revert;
-    return $class->convert(tree => $tree, action => $def_action, 
-			   legacy_encoding => $legacy);
+    return $class->convert(tree => $tree, action => $def_action);
 }
 
 # <getHTML> returns the HTML and Javascript that show the menu.
@@ -121,14 +111,14 @@ sub readDB {
 #     styles - alternative set of styles. Default will be used if this isn't
 #              supplied or malformed.
 #     caption - a starting caption. Optional.
+#     no_ie - if true, no anchor tags will be added to captions.
 # Returns: In list context returns a list of HTML lines to print. In scalar
 #     context returns a reference to same list.
 
 sub getHTML {
     my $self = shift;
-    bytes->import if $self->{Bytes};
-
     my %args = @_;
+
     my $caption = (exists $args{caption}) ? $args{caption} : $self->getValue;
     my $styles = $args{styles};
     $styles = DEFAULT_STYLES unless(ref $styles eq 'HASH' 
@@ -137,6 +127,7 @@ sub getHTML {
 				    and $styles->{Smenu});
     my $unique = $self->getUniqueId;
     my $action = $self->{Action}->($self, -1, $unique);
+    $action =~ s/([^;])\s*$/$1;/;
     my @html; # return value.
 
     push @html, $cgi->div({-class => $styles->{caption},
@@ -144,9 +135,9 @@ sub getHTML {
 			   -onMouseOver => "showMenu(1, 0, 'main_$unique', " .
 			       "this, 'main_$unique')",
 			   -onMouseOut => "outOfMenu()",
-			   -onClick => $action
+			   -onClick => "${action}hideMenus(0)"
 			   }, $caption);
-    $self->buildTable(1, 0, $unique, \@html, %$styles);
+    $self->buildTable(1, 0, $unique, \@html, $args{no_ie}, %$styles);
 
     return @html if (wantarray);
     return \@html;
@@ -162,42 +153,49 @@ sub getHTML {
 #            $id - The menu's HTML name, used for identification by JavaScript 
 #                  functions.
 #            $html - a reference to the stack.
+#            $no_ie - no anchor tags will be added around the caption.
 #            %styles - a hash of style names.
 # Returns: Nothing. Modifies buffer directly.
 
 sub buildTable {
     my $self = shift;
     my $serial = $self->{_Serial};
-    my ($ismain, $level, $unique, $html, %styles) = @_;
+    my ($ismain, $level, $unique, $html, $no_ie, %styles) = @_;
     
-    my $style = ($ismain) ? $styles{Mmenu} : $styles{Smenu};
-    my $name = ($ismain) ? "main_$unique" : "s_${serial}_$unique";
+    my ($style, $name);
+    if ($ismain) {
+	$style = $styles{Mmenu};
+	$name = "main_$unique";
+    } else {
+	$style = $styles{Smenu};
+	$name = "s_${serial}_$unique"
+    }
+
     my $htmlstr = $cgi->start_table({-class => $style, -id => $name});
     my $next_level = $level + 1;
-
-    # '~' is a placeholder
-    my $GonMouse = "showMenu(0, ~1, 's_~2_$unique', this, 'main_$unique');";
-    my $GonClick = $self->{Action};
     
     while (my $item = $self->nextNode) {
-	bytes->import if $self->{Bytes};
+	# '~n' is a placeholder
+	my $onMouse = "showMenu(0, ~1, 's_~2_$unique', this, 'main_$unique');";
+	my $onClick = $item->{Action}->($item, $level, $unique);
 
-	my $onMouse = $GonMouse;
-	my $onClick = $GonClick->($item, $level, $unique);
+	my $value = $item->getValue;
+	my $href = '"javascript:void(0)"';
+	my $caption = ($no_ie) ? $value: "<a href=$href>$value</a>";
 
 	if ($item->childCount) {
 	    # '~1' = _next_ menu's level. '~2' = branch serial.
 	    $onMouse =~ s/~2/$item->{_Serial}/;          
 	    $onMouse =~ s/~1/$next_level/e; 
 
-	    $item->buildTable(0, $next_level, $unique, $html, %styles);
+	    $item->buildTable(0, $next_level, $unique, $html, $no_ie, %styles);
 	} else {$onMouse = "stopTimer();hideMenus($next_level);";}
 
-	$onClick .= '; ' if ($onClick and $onClick !~ /;$/);
+	$onClick =~ s/([^;])\s*$/$1;/;
 	$htmlstr .= $cgi->Tr($cgi->td({-onMouseOver => $onMouse,
 				       -onClick => "${onClick}hideMenus(0)",
-				       -onMouseOut => "outOfMenu()"}, 
-				      $item->{Value} ));
+				       -onMouseOut => 'outOfMenu()'}, 
+				      $caption ));
     }
     $htmlstr .= $cgi->end_table;
     push @$html, $htmlstr;
@@ -231,21 +229,6 @@ sub append {
 sub getUniqueId {
     my $self = shift;
     return "$self->{_LuckyNumber}__$self->{_Serial}";
-}
-
-# <useBytes> and <noBytes> change the boolean flag that determines whether 
-#  byte semantics should be used when processing that item.
-# Arguments: None.
-# Returns: Nothing.
-
-sub useBytes {
-    my $self = shift;
-    $self->{Bytes} = 1;
-}
-
-sub noBytes {
-    my $self = shift;
-    $self->{Bytes} = 0;
 }
 
 # <setAction> sets the action on an item. if no action is given, the default 
@@ -299,23 +282,52 @@ sub reasonableCSS {
 			color => 'white', 'font-weight' => 'bold'},
 	    Mmenu => {position => 'absolute', top => '1', left => '1', 
 		      background => 'cyan', 'z-index' => 10, 
-		      visibility => 'hidden'},
+		      visibility => 'hidden', 'text-decoration' => 'none'},
 	    Smenu => {position => 'absolute', top => '1', left => '1', 
 		      background => 'cyan', 'z-index' => 10, 
-		      visibility => 'hidden'}
+		      visibility => 'hidden', 'text-decoration' => 'none'},
+	    _Mmenu => {background => 'blue', 'z-index' => 10, 
+		       color=>'white'},
+	    _Smenu => {background => 'blue', 'z-index' => 10, 
+		       color => 'white'}
+
 	    };
 } 
 
+# <buildCSS> turns the datastructure provided by the previous two subs into 
+#   valid CSS. Hash keys are converted into classes, and hash keys preceded 
+#   with an underscore are converted into the "class td:hover" syntax.
+# Arguments: $raw_css - The datastructure described in <baseCSS>.
+#            $no_ie - no anchor style will be added to the hover style if true.
+#            $no_autolink - prevents generation af a:link if true.
+# Returns: A string containing the CSS.
+
 sub buildCSS {
     my $self = shift; # Never used - class method.
-    my $raw_css = shift;
+    my ($raw_css, $no_ie, $no_autolink) = @_;
     my $css = '';
+    my $ie_bloat = ($no_ie) ? '' : ' a';
     
     for my $class (keys %$raw_css) {
 	my %props = %{ $raw_css->{$class} };
-	$css .= ".$class {\n";
+	my $hover = ($class =~ s/^_//) ? 1 : 0;
+
+	$css .= ".$class ";
+	$css .= "td${ie_bloat}:hover" if ($hover);
+	$css .= " {\n";
 	$css .= join "\n", map {"\t$_: $props{$_};"} keys %props;
 	$css .= "\n}\n\n";
+
+	# Generate link style for IE6 support...
+	unless ($hover || $no_ie || $no_autolink) {
+	    my %hprops = %props;
+	    delete @hprops{'position', 'top', 'left', 'right', 'bottom', 
+			  'visibility', 'z-index'};
+	    $css .= ".$class a:link, .$class a:visited ";
+	    $css .= " {\n";
+	    $css .= join "\n", map {"\t$_: $hprops{$_};"} keys %hprops;
+	    $css .= "\n}\n\n";
+	}
     }
     return $css;
 }
@@ -458,23 +470,22 @@ EndJS
     my ($level, $unique) = @_;
     
     my $value = $self->getValue;
-    return "caption_${unique}.innerHTML='$value'";
+    return "getElementById(caption_$unique).innerHTML='$value'";
   };
 
-  # Build the tree (examples use legacy encoding!):
-  my $menu = Javascript::Menu->convert(tree => $otherTree, action => $action,
-                                       legacy_encoding => 1);
+  # Build the tree:
+  my $menu = Javascript::Menu->convert(tree => $otherTree, action => $action);
   
-  my $menu = Javascript:Menu->readDB(source_name => $table, source => $dbh,
-                                     action => $action, legacy_encoding => 1);
+  my $menu = Javascript::Menu->readDB(source_name => $table, source => $dbh,
+                                     action => $action);
   
   my $menu = Javascript::Menu->new(value => 'Please select a parrot', 
-                                   action => $action, legacy_enciding => 1);
+                                   action => $action);
   my $blue = $menu->append('Norwegian Blue');
   $blue->append('Pushing up the daisies');
   $menu->append('A Snail');
 
-  # Print it out:
+  # Print it out as a right-to-left menu:
   my $css = $menu->buildCSS($menu->reasonableCSS);
   print $cgi->start_html(-script => $menu->baseJS('rtl'), 
                          -style => $css); #CSS plays an important role. 
@@ -482,7 +493,7 @@ EndJS
   
 =head1 DESCRIPTION
 
-Javascript::Menu is an object that helps in creating the HTML, Javascript, and some of the CSS required for a table-based Menu. There are a few other modules that deal with menus, But as I browsed through them, I found that none of them exactly fitted my needs. So I designed this module, with the following goals in mind:
+Javascript::Menu is an object that helps in creating the HTML, Javascript, and some of the CSS required for a table-based menu. There are a few other modules that deal with menus, But as I browsed through them, I found that none of them exactly fitted my needs. So I designed this module, with the following goals in mind:
 
 =over 4
 
@@ -492,7 +503,7 @@ The main feature of this module is the ability to supply all nodes or any specif
 
 =item I18n
 
-Working with i18n (internationalization) can be a big headache. Working with Hebrew (or Arabic) forces you not only to change your charachters, but also to change your direction of writing. I incorporated into this module native support for legacy ASCII-based encodings, as well as the ability to produce right-to-left menus. 
+Working with i18n (internationalization) can be a big headache. Working with Hebrew (or Arabic) forces you not only to change your charachters, but also to change your direction of writing. I incorporated into this module the ability to produce right-to-left menus and tested it using a legacy ASCII-based encoding (iso-8859-8). 
 
 =item Object Hierarchy
 
@@ -500,11 +511,11 @@ I designed the module to work with two other modules of mine, NumberedTree and N
 
 =back
 
-Being it the first version of the module, perhaps some features are missing, but having used the module for my own needs, I found the module as good as to release it on CPAN. You'll find that having made some preliminary steps, like tweaking the CSS to look the way you like it to, the rest is fairly easy.
+The current version adds support for highlighting the item that's hovered over. You'll find that having made some preliminary steps, like tweaking the CSS to look the way you like it to, the rest is fairly easy.
 
 So, how do we use this module?
 
-=head2 What should I expect to see?
+=head2 What should you expect to see?
 
 The generated menu will be visible as a div that shows the caption line for the menu. As you hover with the mouse over the caption, the main menu will appear under the caption. Hovering over any item with childs will open a sub-menu either to the right or left of the main menu, depending on the direction you chose for the menu. Clicking on any item will hide all menus, leaving only the caption, and fire the action you assigned to the item.
 
@@ -512,13 +523,11 @@ The generated menu will be visible as a div that shows the caption line for the 
 
 The following rules decide on the names (id attributes) of generated HTML elements:
 
-Every generated menu recieves a unique suffix. Let's call this $unique. this is added to the name of  every part of the same menu.
+Every generated menu recieves a unique suffix. Let's call this $unique. this is added to the name of every part of the same menu.
 
 Every node has a number, unlike any other node on the same tree. Let's call that $number. For reasons why, see the documentation for NumberedTree or just read on.
 
-The caption line is called caption_$unique.
-The main menu is called main_$unique.
-Every sub menu is called s_$number_$unique.
+The caption line is called caption_$unique, The main menu is called main_$unique, Every sub menu is called s_$number_$unique.
 
 =head2 CSS classes
 
@@ -528,7 +537,7 @@ Every part of the menu is associated with a class name, that defines its style (
 
 Javascript::Menu requires some supporting code to work. First, as implied by its name, certain Javascript functions must be available. This is, however, the easiest thing to set up. The code is returned in its entirety, as one gigant multiline string, by the class method I<baseJS> (see below). use this in your head tag, or do like me and dump this to a .js file.
 
-The second thing that needs to be set up is the CSS. except for a few settings, you are pretty free to style the menu as you see fit, but that also means some work for you. The class method I<baseCSS> returns only the basic settings, those you can't change. You must tweak it some more to look good. The class method I<reasonableCSS> returns some example CSS that doesn't look too bad. Again, you should tweak this as described below under I<baseCSS>. Finally, I included a convenience class method called I<buildCSS> that stringifies the data structure supplied by these two functions into valid CSS. 
+The second thing that needs to be set up is the CSS. except for a few settings, you are pretty free to style the menu as you see fit, but that also means some work for you. The class method I<baseCSS> returns only the basic settings, those you can't change. You must tweak it some more to look good. The class method I<reasonableCSS> returns some example CSS that doesn't look too bad. Again, you should tweak this as described below under I<buildCSS>. Finally, I included a convenience class method called I<buildCSS> that stringifies the data structure supplied by these two functions into valid CSS and also generates extra CSS to deal with the special oddities of Internet Explorer 6. 
 
 =head2 Building the tree
 
@@ -572,6 +581,8 @@ The menu's unique suffix.
 
 To make an item do nothing except for showing its submenu, use $item->I<setAction>
 
+B<I18n alert!> What this all means is that you supply some of the strings the module will be working with. This means you could, by mistake, send strings that are mixed utf8 (perl's internal encoding) and your encoding. This might break things, so if something breaks, see that your strings are in one encoding. A bitch, eh? That's the way it is when you're not in the USA or England..
+ 
 =head2 Printing the HTML
 
 Now all you have to do is $tree->getHTML. this will return an array so you can shift out the caption and locate it inside some div while the rest of the menu is located outside, avoiding width constraints. You can also push other stuff inside and create a widget for your script.
@@ -586,30 +597,35 @@ There are three of them:
 
 =over 4
 
-=item new (I<value> => $value, action => $action, legacy_encoding => 1)
+=item new (I<value> => $value, action => $action)
 
-Creates a new tree with one root element., whose text is specified by the value argument. If an action is not supplied, then the package's default do-nothig action will be used. You'll have to add nodes manually.
-If legacy_encoding is supplied and true, getHTML will use bytes semantics (that's good for ASCII-derived encodings) when called.
+Creates a new tree with one root element, whose text is specified by the value argument. If an action is not supplied, the package's default do-nothig action will be used. You'll have to add nodes manually via the I<append> method.
 
-=item convert (I<tree> => $tree, action => $action, legacy_encoding => 1)
+=item convert (I<tree> => $tree, action => $action)
 
 Converts a tree (given in the I<tree> argument) into an instance of Javascript::Menu. You will lose the original tree of course, so if you still need it, first use $tree->clone (see NumberedTree.pm).
 
-As in new, if action is not specified, one will be created for you. legacy_encoding is also explained in new.
+As in new, if action is not specified, one will be created for you. 
 
-=item readDB (I<source_name> => $table, I<source> => $dbh, action => $action, legacy_encoding => 1);
+=item readDB (I<source_name> => $table, I<source> => $dbh, action => $action);
 
 Creates a new menu from a table that contains tree data as specified in NumberedTree::DBTree. Arguments are the same as to I<new>, except for the required source_name, which specifies the name of the table to be read, and source, which is a DBI database handle.
 
 =back
 
-=head2 getHTML (styles => $styles, caption => 'altCaption')
+=head2 append (I<$value>, $action)
+
+Adds a new child with the value (caption) $value. An action is optional, as described in I<new>. To use the parent node's action on the child node, pass '0' in $action.
+
+=head2 getHTML (styles => $styles, caption => 'altCaption', no_ie => true)
 
 This method returns the HTML for a menu whose caption is the node the method was invoked on. The menu's caption will be the root element's value unless the caption argument is given.
 
 the optional styles argument allows you to change default style names described above. This should be a hash reference, with a key for each style, specifying the new name. Like:
 
 $styles = { caption => 'mycap', Mmenu => 'myM', Smenu => 'myS' };
+
+unless you specify the option no_ie as true, items of your menu will be wrapped with anchor tags so the :hover CSS pseudo-class will be aplicable to them even on Internet Explorer 6.
 
 =head2 Accessors
 
@@ -620,10 +636,6 @@ Javascript::Menu adds to the methods of its base class the following accessors:
 =item getUniqueId
 
 Returns the unique Id that the menu will recieve when built with this node as root.
-
-=item useBytes / noBytes
-
-Specifies whether byte semantics should be used when the node is processed. Has the same effect as the legacy_encoding option in the constructors.
 
 =item getAction / setAction ($action)
 
@@ -643,15 +655,22 @@ Returns the basic Javascript code for use with this module. If the optional $rtl
 
 =item baseCSS
 
-Returns the minimum required CSS for the menu to work properly, as a reference to the following data structure: A main hash with one key for each element of the menu (caption, main menu, sub menus). The value for each key is again a hash with CSS property - value pairs, like top => 1, left => 1 etc. It is up to you to add properties to this structure to make your menu look good.
+Returns the minimum required CSS for the menu to work properly, as a reference to the data structure described below in I<buildCSS>. It is up to you to add properties to this structure to make your menu look good.
 
 =item reasonableCSS
 
 Returns the same data structure as in baseCSS, only with more properties. Using the properties provided by this function will result in a black-bordered, blue caption box with white text, and cyan menus with black text. Again, you can tweak this to your satisfaction.
 
-=item buildCSS ($css)
+=item buildCSS ($css, $no_ie, $no_autolink)
 
-Takes the data structure described in I<baseCSS> and returns a string with valid CSS you can incorporate into your document.
+Takes a data structure and returns a string with valid CSS you can incorporate into your document. 
+
+The data structure is as follows:
+A main hash with one key for each element of the menu (caption, main menu, sub menus). The value for each key is again a hash with CSS property - value pairs, like top => 1, left => 1 etc. If a key is preceded by an underscore, it is converted into the :hover definition for the class of that name (this should be a name given to one of the other classes).
+
+Unless $no_ie is true, buildCSS will generate IE6 compatible style for hover classes. This will also generate CSS for links inside the menu. To inhibit that, set $no_autolink to true.
+
+=back
 
 =head1 BROWSER COMPATIBILITY
 
@@ -665,8 +684,7 @@ or send mail to E<lt>bug-NumberedTree#rt.cpan.orgE<gt>
 
 =head1 SEE ALSO
 
-NumberedTree, NumberedTree::DBTree
-For an explanation of i18n and l10n in perl see perlunicode, bytes.pm, perllocale.
+NumberedTree, NumberedTree::DBTree. For an explanation of i18n and l10n in perl see perlunicode, bytes, Encode, perllocale.
 
 =head1 AUTHOR
 
