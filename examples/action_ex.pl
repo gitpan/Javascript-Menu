@@ -30,7 +30,7 @@ print $cgi->header(-charset => "windows-1255");
 print $cgi->start_html(-xbase => "http://192.168.0.124/",
 		       -encoding => "windows-1255", 
 		       -lang => "he", -dir => "rtl",
-		       -style => $css,
+		       -style => {-code => $css},
 		       -script => {-language => 'Javascript',
 				   -code => $tree2->baseJS('rtl')});
 

@@ -1,0 +1,12 @@
+# http://module-build.sourceforge.net/META-spec.html
+#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
+name:         Javascript-Menu
+version:      2.01
+version_from: Menu.pm
+installdirs:  site
+requires:
+    Tree::Numbered:                1
+    Tree::Numbered::DB:            1
+
+distribution_type: module
+generated_by: ExtUtils::MakeMaker version 6.17
