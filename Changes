@@ -1,0 +1,6 @@
+Revision history for Perl extension Javascript::Menu.
+
+0.01  Sat Sep 27 17:26:23 2003
+	- original version; created by h2xs 1.22 with options
+		-AX Javascript::Menu
+
