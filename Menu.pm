@@ -9,7 +9,7 @@ use constant DEFAULT_STYLES => {caption => 'caption',
 				Mmenu => 'Mmenu', 
 				Smenu => 'Smenu'};
 
-our $VERSION = '2.00';
+our $VERSION = '2.01';
 our @ISA = qw(Tree::Numbered);
 
 # package stuff:
@@ -405,13 +405,13 @@ function showMenu (isMain, level, name, caller, coordSpaceId) {
 		smenu.style.top = findPosY(caller, coordSpace) + "px";
 		smenu.style.left = findPosX(caller, coordSpace) $place + "px";
 	}
-	openMenus.push(smenu);
+	openMenus[openMenus.length] = smenu;
 }
 
 function hideMenus(level) {
 	for (i = openMenus.length - 1; i >= level; i--) {
 		openMenus[i].style.visibility = "hidden";
-		openMenus.pop();
+		openMenus = openMenus.slice(0, i);
 	}
 }
 
@@ -648,7 +648,7 @@ If a URL is supplied, the node will be an anchor reffering to that URL.
 
 =item convert (I<tree> => $tree, action => $action, base_URL => $url)
 
-Converts a tree (given in the I<tree> argument) into an instance of Javascript::Menu. You will lose the original tree of course, so if you still need it, first use $tree->clone (see NumberedTree.pm).
+Converts a tree (given in the I<tree> argument) into an instance of Javascript::Menu. You will lose the original tree of course, so if you still need it, first use $tree->clone (see Tree::Numbered).
 
 Giving a value to base_URL will copy that value to the URL field of every node in the tree. you can add to this using I<deepProcess>.
 
@@ -664,7 +664,7 @@ The cols argument allows you to supply field mappings for the tree (see Tree::Nu
 
 =head2 append (value => I<$value>, action => $action, URL => $url)
 
-Adds a new child with the value (caption) $value. An action or a URL are optional, as described in I<new>. If one of those is not given, the value is taken from its parent (if its parent have one).
+Adds a new child with the value (caption) $value. An action or a URL are optional, as described in I<new>. If one of those is not given, the value is taken from its parent (if its parent has one).
 
 =head2 getHTML (styles => $styles, caption => 'altCaption', no_ie => true)
 
@@ -736,7 +736,7 @@ The following is a categorized list of all available meyhods, for quick referenc
 
 =item Object lifecycle:
 
-new, readDB, delete, *append.
+new, readDB, *delete, *append.
 
 =item Iterating and managing children:
 
@@ -755,7 +755,7 @@ baseCSS, reasonableCSS, buildCSS, baseJS, getHTML
 
 =head1 BROWSER COMPATIBILITY
 
-Tested on IE6 and Mozilla 1.4 and worked. On Konqueror it's about 70% OK, and I'm working on it. If you test it on other browsers, please let me know what is the result.
+Tested on IE6, IE5 and Mozilla 1.4 and worked. On Konqueror it's about 70% OK, and I'm working on it. If you test it on other browsers, please let me know what is the result.
 
 =head1 EXAMPLES
 
@@ -786,6 +786,10 @@ Tree::Numbered, Tree::Numbered::DB.
 =head1 AUTHOR
 
 Yosef Meller, E<lt>mellerf@netvision.net.ilE<gt>
+
+=head1 CREDITS
+
+Louis Campos de Carvalho raised the subject of support for Internet Explorer 5 and tested the patch.
 
 =head1 COPYRIGHT AND LICENSE
 

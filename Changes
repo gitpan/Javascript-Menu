@@ -11,3 +11,6 @@ Revision history for Perl module Javascript::Menu.
 2.00 Fri Oct 31
 	- Everything uses Tree::Numbered::*
 	- Support for simple navigational menus.
+
+2.01 Wed Apr 7
+	- Added IE5 support in the JS code.
