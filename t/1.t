@@ -1,8 +1,9 @@
+# Old test - used to check for backward compatibility with old code.
 
 use Test::More tests => 9;
-BEGIN { use_ok('NumberedTree') };
+BEGIN { use_ok('Tree::Numbered') };
 
-my $tree = NumberedTree->new('Root');
+my $tree = Tree::Numbered->new('Root');
 ok($tree, "constructor");
 
 my $child = $tree->append("First");
@@ -12,7 +13,7 @@ $tree->append("Second");
 ok($child->append("First child"), "deep append");
 
 my $cloned = $tree->clone;
-isa_ok($cloned, "NumberedTree", "cloning");
+isa_ok($cloned, "Tree::Numbered", "cloning");
 
 @ch1 = sort $cloned->listChildNumbers;
 @ch2 = sort $tree->listChildNumbers;

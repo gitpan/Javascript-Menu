@@ -19,9 +19,9 @@ To install this module type the following:
 
 DEPENDENCIES
 
-Mandatory - NumberedTree.pm
+Mandatory - Tree::Numbered
 
-Will warn of a missing dependency if you don't have NumberedTree::DBTree, but you can ignore that if you don't need it. If you do, you won't be able to use Javascript::Menu->readDB.
+Will warn of a missing dependency if you don't have Tree::Numbered::DB, but you can ignore that if you don't need it. If you do, you won't be able to use Javascript::Menu->readDB.
 
 COPYRIGHT AND LICENCE
 

@@ -3,14 +3,14 @@ package Javascript::Menu;
 use strict;
 
 use CGI;
-use NumberedTree;
+use Tree::Numbered;
 
 use constant DEFAULT_STYLES => {caption => 'caption', 
 				Mmenu => 'Mmenu', 
 				Smenu => 'Smenu'};
 
-our $VERSION = '1.01';
-our @ISA = qw(NumberedTree);
+our $VERSION = '2.00';
+our @ISA = qw(Tree::Numbered);
 
 # package stuff:
 my $cgi = CGI->new;    # Just for HTML shortcuts.
@@ -25,11 +25,12 @@ my $default_action = sub {
 
 # <new> constructs a new tree or node.
 # Arguments: By name: 
-#            value - the value to be stored in the node.
-#            action - a perl sub that is responsible for generating Javascript
-#                     code to be executed on click. The sub will be called as 
-#                     a method ($self->generator) so you have access to the
-#                     object data when you construct the action.
+#     value - the value to be stored in the node.
+#     action - a perl sub that is responsible for generating Javascript
+#              code to be executed on click. The sub will be called as 
+#              a method ($self->generator) so you have access to the
+#              object data when you construct the action (optional).
+#     URL - a url to navigate to on click (optional).
 # Returns: The tree object.
 
 sub new {
@@ -39,29 +40,30 @@ sub new {
     my $parent_serial;
     my $class;
     
-    my $properties = $parent->SUPER::new($args{value});
+    my %nargs = (Value => $args{value});
+    $nargs{URL} = $args{URL} if (exists $args{URL});
+    my $properties = $parent->SUPER::new(%nargs);
 
+    my $action = $args{action};
     if ($class = ref($parent)) {
 	$properties->{_Parent} = $parent->{_Serial};
-	$properties->{Action} = 
-	    (exists $args{action}) ? $args{action} : $parent->{Action};  
+	$action = $parent->getAction unless (defined $action);
     } else {
 	$class = $parent;
 	$properties->{_Parent} = 0;
-	$properties->{Action} = 
-	    (exists $args{action}) ? $args{action} : $default_action;  
     }
 
-    $properties->{Action} = $default_action 
-	unless(defined $properties->{Action});
+    $properties->addField('Action'); # Does nothing if exists.
+    $properties->setAction((defined $action) ? $action : $default_action);
     return $properties;
 }
 
-# <convert> takes a NumberedTree and makes it a Javascript::Menu.
+# <convert> takes a Tree::Numbered and makes it a Javascript::Menu.
 # Arguments: By name:
 #     tree - the tree to be converted to a menu.
 #     action - an action generator, as described in <new>.
 #     parent - (not for the user) sets the _Parent property.
+#     base_URL - a url that will be appended later by a relative one. 
 # Returns: the tree, modified and re-blessed as a Javascript::Menu.
 
 sub convert {
@@ -73,22 +75,28 @@ sub convert {
     my $def_action = (exists $args{action}) ? $args{action} : $default_action;
     $parent_num ||= 0;
 
-    $tree->{Action} = $def_action;
+    # Won't change existing setting of 'Action' and 'URL' if it's there.
+    $tree->addField('Action', $def_action);
+    $tree->addField('URL', $args{base_URL}) if (exists $args{'base_URL'});
     $tree->{_Parent} = $parent_num;
 
     for (@{ $tree->{Items} }) {
-	$parent->convert(tree => $_, action => $def_action, 
-			 parent => $tree->getNumber);
+	my %inargs = (tree => $_, action => $def_action, 
+		      parent => $tree->getNumber);
+	$inargs{base_URL} = $args{base_URL} if (exists $args{'base_URL'});
+	$parent->convert(%inargs);
     }
     return bless $tree, $class;
 }
 
 # <readDB> constructs a new Javascript::Menu from a table in a DB using 
-#  NumberedTree::DBTree.
+#  Tree::Numbered::DB.
 # Arguments: By name:
 #     source_name - table name.
 #     source - a DB handle to work with.
 #     action - an action generator, as described in <new>.
+#     cols - ref to a hash with mappings (see Tree::Numbered::DB).
+#     URL_col - shortcut to add the URL column to the cols.
 # Returns: the tree, modified and re-blessed as a Javascript::Menu.
 
 sub readDB {
@@ -97,14 +105,23 @@ sub readDB {
     my %args = @_;
 
     my ($table, $dbh) = @args{'source_name', 'source'};
-    my $def_action = (exists $args{action}) ? $args{action} : $default_action;
     return undef unless ($table && $dbh);
 
-    require NumberedTree::DBTree; 
-    my $tree = NumberedTree::DBTree->read($table, $dbh);
+    my $def_action = (exists $args{action}) ? $args{action} : $default_action;
+    my $cols = $args{cols};
+    $cols->{URL_col} = $args{URL_col} if ($args{URL_col});
+    # Default creation of Value is no longer used because we request a field.
+    $cols->{Value_col} ||= 'name';
+
+    require Tree::Numbered::DB; 
+    my @args = ($table, $dbh);
+    push @args, $cols if $cols;
+    #read -> revert -> convert: construct a DB tree, loose DBness, make Menu.
+    my $tree = Tree::Numbered::DB->read(@args);
     $tree->revert;
     return $class->convert(tree => $tree, action => $def_action);
 }
+
 
 # <getHTML> returns the HTML and Javascript that show the menu.
 # Arguments: By name:
@@ -120,13 +137,15 @@ sub getHTML {
     my %args = @_;
 
     my $caption = (exists $args{caption}) ? $args{caption} : $self->getValue;
+    $caption = $self->getFullCap($args{no_ie}, $caption);
+
     my $styles = $args{styles};
     $styles = DEFAULT_STYLES unless(ref $styles eq 'HASH' 
 				    and $styles->{caption} 
 				    and $styles->{Mmenu} 
 				    and $styles->{Smenu});
     my $unique = $self->getUniqueId;
-    my $action = $self->{Action}->($self, -1, $unique);
+    my $action = $self->getAction()->($self, -1, $unique);
     $action =~ s/([^;])\s*$/$1;/;
     my @html; # return value.
 
@@ -174,14 +193,13 @@ sub buildTable {
     my $htmlstr = $cgi->start_table({-class => $style, -id => $name});
     my $next_level = $level + 1;
     
+    $self->savePlace;
+    $self->reset;
+
     while (my $item = $self->nextNode) {
 	# '~n' is a placeholder
 	my $onMouse = "showMenu(0, ~1, 's_~2_$unique', this, 'main_$unique');";
-	my $onClick = $item->{Action}->($item, $level, $unique);
-
-	my $value = $item->getValue;
-	my $href = '"javascript:void(0)"';
-	my $caption = ($no_ie) ? $value: "<a href=$href>$value</a>";
+	my $onClick = $item->getAction()->($item, $level, $unique);
 
 	if ($item->childCount) {
 	    # '~1' = _next_ menu's level. '~2' = branch serial.
@@ -191,34 +209,24 @@ sub buildTable {
 	    $item->buildTable(0, $next_level, $unique, $html, $no_ie, %styles);
 	} else {$onMouse = "stopTimer();hideMenus($next_level);";}
 
+	my $caption = $item->getFullCap($no_ie);
 	$onClick =~ s/([^;])\s*$/$1;/;
 	$htmlstr .= $cgi->Tr($cgi->td({-onMouseOver => $onMouse,
 				       -onClick => "${onClick}hideMenus(0)",
 				       -onMouseOut => 'outOfMenu()'}, 
 				      $caption ));
     }
+    $self->restorePlace;
     $htmlstr .= $cgi->end_table;
     push @$html, $htmlstr;
 }
 
-# <append> adds a node to the tree, at the end of the Items array.
-# Arguments: $value - the caption of the new node.
-#            $action - an action to assign to the item. undef is allowed. To
-#                use the parent's action pass '0'.
-# Returns: The new node.
-
-sub append {
-    my $self = shift;
-    my ($value, $action) = @_;
-    my %args = (value => $value);
-
-    $args{action} = $action unless ($action eq '0');
-    my $newNode = $self->new(%args);
-
-    return undef unless $newNode;
-
-    push @{$self->{Items}}, $newNode;
-    return $newNode;
+sub getFullCap {
+    my ($item, $no_ie, $caption) = @_;
+    my $value = $caption || $item->getValue;
+    my $href = $item->getURL || '"javascript:void(0)"';
+    if ($no_ie && !$item->getURL) { return $value; }
+    else { return "<a href=$href>$value</a>";}
 }
 
 # <getUniqueId> returns the html suffix id of the menu.
@@ -241,12 +249,20 @@ sub setAction {
     my $action = shift;
     
     $action ||= $default_action;
-    $self->{Action} = $action;
+    $self->setField('Action', $action);
 }
 
-sub getAction {
+# <set/getURL> are here to make sure nobody dies when they're called even if
+#   the field doesn't exist.
+
+sub getURL {
     my $self = shift;
-    return $self->{Action};
+    return $self->getField('URL');
+}
+
+sub setURL {
+    my $self = shift;
+    return $self->setField('URL', @_);
 }
 
 #**************************************************************
@@ -277,7 +293,8 @@ sub baseCSS {
 
 sub reasonableCSS {
     my $self = shift; # Never used - class method.
-    return {caption => {border => 'solid 1px black',
+    return {caption => {_border => 'solid 1px black', 
+			'text-decoration' => 'none',
 			background => 'blue', width => '10%', 
 			color => 'white', 'font-weight' => 'bold'},
 	    Mmenu => {position => 'absolute', top => '1', left => '1', 
@@ -315,7 +332,9 @@ sub buildCSS {
 	$css .= ".$class ";
 	$css .= "td${ie_bloat}:hover" if ($hover);
 	$css .= " {\n";
-	$css .= join "\n", map {"\t$_: $props{$_};"} keys %props;
+	$css .= join "\n", 
+	map {my $under=$_; s/^_//; "\t$_: $props{$under};"}
+	keys %props;
 	$css .= "\n}\n\n";
 
 	# Generate link style for IE6 support...
@@ -323,6 +342,7 @@ sub buildCSS {
 	    my %hprops = %props;
 	    delete @hprops{'position', 'top', 'left', 'right', 'bottom', 
 			  'visibility', 'z-index'};
+	    %hprops = map {$_=>$hprops{$_}} grep /^[^_]/, keys %hprops;
 	    $css .= ".$class a:link, .$class a:visited ";
 	    $css .= " {\n";
 	    $css .= join "\n", map {"\t$_: $hprops{$_};"} keys %hprops;
@@ -465,6 +485,7 @@ EndJS
   use Javascript::Menu;
 
   # Give it something to do (example changes the menu's caption):
+
   my $action = sub {
     my $self = shift;
     my ($level, $unique) = @_;
@@ -473,7 +494,9 @@ EndJS
     return "getElementById(caption_$unique).innerHTML='$value'";
   };
 
+
   # Build the tree:
+
   my $menu = Javascript::Menu->convert(tree => $otherTree, action => $action);
   
   my $menu = Javascript::Menu->readDB(source_name => $table, source => $dbh,
@@ -481,11 +504,25 @@ EndJS
   
   my $menu = Javascript::Menu->new(value => 'Please select a parrot', 
                                    action => $action);
-  my $blue = $menu->append('Norwegian Blue');
-  $blue->append('Pushing up the daisies');
-  $menu->append('A Snail');
 
+  my $blue = $menu->append(value => 'Norwegian Blue');
+  $blue->append(value => 'Pushing up the daisies');
+  $menu->append(value => 'A Snail');
+
+  # Or maybe you just want a navigational menu?
+
+  my $menu = Javascript::Menu->new(value => 'Please select a prime minister');
+  $menu->append(value => 'Ariel Sharon', 
+                           URL => 'www.corruption.org/ariel_sharon.htm');
+
+  $menu->append(value => 'Benjamin Netanyahu', 
+                URL => 'www.corruption.org/bibi.htm');
+
+  $menu->append(value => 'Shaul Mofaz', URL => 'www.martial_law.org');
+
+  
   # Print it out as a right-to-left menu:
+
   my $css = $menu->buildCSS($menu->reasonableCSS);
   print $cgi->start_html(-script => $menu->baseJS('rtl'), 
                          -style => $css); #CSS plays an important role. 
@@ -507,7 +544,7 @@ Working with i18n (internationalization) can be a big headache. Working with Heb
 
 =item Object Hierarchy
 
-I designed the module to work with two other modules of mine, NumberedTree and NumberedTree::DBTree, which simplify the task of building the menu and allow for construction of a menu from database information.
+I designed the module to work with two other modules of mine, Tree::Numbered and Tree::Numbered::DB, which simplify the task of building the menu and allow for construction of a menu from database information.
 
 =back
 
@@ -537,7 +574,9 @@ Every part of the menu is associated with a class name, that defines its style (
 
 Javascript::Menu requires some supporting code to work. First, as implied by its name, certain Javascript functions must be available. This is, however, the easiest thing to set up. The code is returned in its entirety, as one gigant multiline string, by the class method I<baseJS> (see below). use this in your head tag, or do like me and dump this to a .js file.
 
-The second thing that needs to be set up is the CSS. except for a few settings, you are pretty free to style the menu as you see fit, but that also means some work for you. The class method I<baseCSS> returns only the basic settings, those you can't change. You must tweak it some more to look good. The class method I<reasonableCSS> returns some example CSS that doesn't look too bad. Again, you should tweak this as described below under I<buildCSS>. Finally, I included a convenience class method called I<buildCSS> that stringifies the data structure supplied by these two functions into valid CSS and also generates extra CSS to deal with the special oddities of Internet Explorer 6. 
+The second thing that needs to be set up is the CSS. except for a few settings, you are pretty free to style the menu as you see fit, but that also means some work for you. The class method I<baseCSS> returns only the basic settings, those you can't change. You must tweak it some more to look good. The class method I<reasonableCSS> returns some example CSS that doesn't look too bad. Again, you should tweak this as described below under I<buildCSS>. 
+
+Finally, I included a convenience class method called I<buildCSS> that stringifies the data structure supplied by these two functions into valid CSS and also generates extra CSS to deal with the special oddities of Internet Explorer 6. 
 
 =head2 Building the tree
 
@@ -547,15 +586,15 @@ To get the tree that represents the structure of the menu, you have 3 ways:
 
 =item The hard way: Javascript::Menu->new
 
-This builds the root node, with your desired value and action (which will be the default for all children of this node). You add nodes with $tree->I<append>, and descend the hierarchy using methods found in the parent class - NumberedTree. For each element you supply the value (what is shown on the screen) and possibly an action.
+This builds the root node, with your desired value and action, URL or both (which will be the default for all children of this node). You add nodes with $tree->I<append>, and descend the hierarchy using methods found in the parent class - Tree::Numbered. For each element you supply the value (what is shown on the screen) and possibly an action.
 
 =item The easier way: Javascript::Menu->convert
 
-This just takes an existing NumberedTree and blesses it as a Menu, adding an action to each node. This is easier if you already have the data structure for something else, and you want to make a menu out of it..
+This just takes an existing Tree::Numbered and blesses it as a Menu, adding an action to each node. This is easier if you already have the data structure for something else, and you want to make a menu out of it.
 
 =item A nice shortcut: Javascript::Menu->readDB
 
-If you have the module NumberedTree::DBTree (another one of mine) and you use it to store trees in a database, this method allows you to read such table directly and convert it to a menu. This is extremely useful, trust me :)
+If you have the module Tree::Numbered::DB (another one of mine) and you use it to store trees in a database, this method allows you to read such table directly and convert it to a menu. This is extremely useful, trust me :)
 
 =back
 
@@ -581,15 +620,19 @@ The menu's unique suffix.
 
 To make an item do nothing except for showing its submenu, use $item->I<setAction>
 
-B<I18n alert!> What this all means is that you supply some of the strings the module will be working with. This means you could, by mistake, send strings that are mixed utf8 (perl's internal encoding) and your encoding. This might break things, so if something breaks, see that your strings are in one encoding. A bitch, eh? That's the way it is when you're not in the USA or England..
- 
+B<I18n alert!> What this all means is that you supply some of the strings the module will be working with. This means you could, by mistake, send strings that are mixed utf8 (perl's internal encoding) and your encoding. This might break things, so if something breaks, see that your strings are in one encoding. A bitch, eh? That's the way it is when you're not in the USA or Britain.
+
+=head2 But I don't need all this stuff! I just want a navigational menu!
+
+Cool. Just set the URL property of an object either in the constructor call or using I<setURL>. Menu items will be created with that URL. You can also combine a URL with an action.
+
 =head2 Printing the HTML
 
 Now all you have to do is $tree->getHTML. this will return an array so you can shift out the caption and locate it inside some div while the rest of the menu is located outside, avoiding width constraints. You can also push other stuff inside and create a widget for your script.
 
 =head1 METHODS
 
-This section only describes methods that are not the same as in NumberedTree. Obligatory arguments are marked.
+This section only describes methods that are not the same as in Tree::Numbered. Obligatory arguments are marked.
 
 =head2 Constructors
 
@@ -597,25 +640,31 @@ There are three of them:
 
 =over 4
 
-=item new (I<value> => $value, action => $action)
+=item new (I<value> => $value, action => $action, URL => $url)
 
 Creates a new tree with one root element, whose text is specified by the value argument. If an action is not supplied, the package's default do-nothig action will be used. You'll have to add nodes manually via the I<append> method.
 
-=item convert (I<tree> => $tree, action => $action)
+If a URL is supplied, the node will be an anchor reffering to that URL.
+
+=item convert (I<tree> => $tree, action => $action, base_URL => $url)
 
 Converts a tree (given in the I<tree> argument) into an instance of Javascript::Menu. You will lose the original tree of course, so if you still need it, first use $tree->clone (see NumberedTree.pm).
 
+Giving a value to base_URL will copy that value to the URL field of every node in the tree. you can add to this using I<deepProcess>.
+
 As in new, if action is not specified, one will be created for you. 
 
-=item readDB (I<source_name> => $table, I<source> => $dbh, action => $action);
+=item readDB (I<source_name> => $table, I<source> => $dbh, cols => $cols, action => $action, URL_col => $urlcol);
 
-Creates a new menu from a table that contains tree data as specified in NumberedTree::DBTree. Arguments are the same as to I<new>, except for the required source_name, which specifies the name of the table to be read, and source, which is a DBI database handle.
+Creates a new menu from a table that contains tree data as specified in Tree::Numbered::DB. Arguments are the same as to I<new>, except for the required source_name, which specifies the name of the table to be read, and source, which is a DBI database handle. 
+
+The cols argument allows you to supply field mappings for the tree (see Tree::Numberd::DB). URL_col is a shortcut for giving a mapping to a collumn containing the URLs of nodes (if that's what you need). If you provide this argument, it will override any collision in the $cols hashref.
 
 =back
 
-=head2 append (I<$value>, $action)
+=head2 append (value => I<$value>, action => $action, URL => $url)
 
-Adds a new child with the value (caption) $value. An action is optional, as described in I<new>. To use the parent node's action on the child node, pass '0' in $action.
+Adds a new child with the value (caption) $value. An action or a URL are optional, as described in I<new>. If one of those is not given, the value is taken from its parent (if its parent have one).
 
 =head2 getHTML (styles => $styles, caption => 'altCaption', no_ie => true)
 
@@ -625,7 +674,7 @@ the optional styles argument allows you to change default style names described 
 
 $styles = { caption => 'mycap', Mmenu => 'myM', Smenu => 'myS' };
 
-unless you specify the option no_ie as true, items of your menu will be wrapped with anchor tags so the :hover CSS pseudo-class will be aplicable to them even on Internet Explorer 6.
+unless you specify the option no_ie as true, items of your menu will be wrapped with anchor tags so the :hover CSS pseudo-class will be aplicable to them even on Internet Explorer 6. Any node that has a URL will become an anchor even if no_ie => true.
 
 =head2 Accessors
 
@@ -640,6 +689,10 @@ Returns the unique Id that the menu will recieve when built with this node as ro
 =item getAction / setAction ($action)
 
 gets and sets the item's action. If no action is given to setAction, the default do-nothing action is used.
+
+=item getURL / setURL ($url)
+
+gets and sets the item's URL.
 
 =back
 
@@ -666,25 +719,69 @@ Returns the same data structure as in baseCSS, only with more properties. Using 
 Takes a data structure and returns a string with valid CSS you can incorporate into your document. 
 
 The data structure is as follows:
+
 A main hash with one key for each element of the menu (caption, main menu, sub menus). The value for each key is again a hash with CSS property - value pairs, like top => 1, left => 1 etc. If a key is preceded by an underscore, it is converted into the :hover definition for the class of that name (this should be a name given to one of the other classes).
 
 Unless $no_ie is true, buildCSS will generate IE6 compatible style for hover classes. This will also generate CSS for links inside the menu. To inhibit that, set $no_autolink to true.
 
+If you know you'll have anchors in your menu and you don't want them to duplicate some property found in the CSS for the element they are contained in, prefix that property with an underscore. See how it's done in I<reasonableCSS> and try it without the leading underscore to see the difference (a border appears inside the caption and around it too).
+
 =back
+
+=head1 METHOD SUMMARY (NEW + INHERITED)
+
+The following is a categorized list of all available meyhods, for quick reference. Methods that do not appear in the source of this module are marked:
+
+=over 4
+
+=item Object lifecycle:
+
+new, readDB, delete, *append.
+
+=item Iterating and managing children:
+
+*nextNode, *reset, *savePlace, *restorePlace, *childCount, *getSubTree, *follow
+
+=item Generating code:
+
+baseCSS, reasonableCSS, buildCSS, baseJS, getHTML
+
+=item Fields:
+
+*addField, *removeField, *setField, *setFields, *getField, *getFields, *hasField.
+
+=back
+
 
 =head1 BROWSER COMPATIBILITY
 
-Tested on IE6 and Mozilla 1.4 and worked. If you test it on other browsers, please let me know what is the result.
+Tested on IE6 and Mozilla 1.4 and worked. On Konqueror it's about 70% OK, and I'm working on it. If you test it on other browsers, please let me know what is the result.
+
+=head1 EXAMPLES
+
+I included two examples, both create a right to left menu:
+
+=over 4
+
+=item examples/nav_ex.pl 
+
+Creates a navigational menu that links to the white house site. Demonstrates the use of another tree to build a menu on, and the use of deepProcess to asign URLs.
+
+=item examples/action_ex.pl
+
+Shows how to create an action-based menu. The example changes the menu's caption whenever an item is clicked.
+
+=back
 
 =head1 BUGS
 
 Please report through CPAN: 
-E<lt>http://rt.cpan.org/NoAuth/Bugs.html?Dist=NumberedTreeE<gt>
-or send mail to E<lt>bug-NumberedTree#rt.cpan.orgE<gt> 
+ E<lt>http://rt.cpan.org/NoAuth/Bugs.html?Dist=Tree-Numbered-DBE<gt>
+ or send mail to E<lt>bug-Tree-Numbered-DB#rt.cpan.orgE<gt> 
 
 =head1 SEE ALSO
 
-NumberedTree, NumberedTree::DBTree. For an explanation of i18n and l10n in perl see perlunicode, bytes, Encode, perllocale.
+Tree::Numbered, Tree::Numbered::DB.
 
 =head1 AUTHOR
 

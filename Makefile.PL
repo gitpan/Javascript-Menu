@@ -4,7 +4,7 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
     'NAME'		=> 'Javascript::Menu',
     'VERSION_FROM'	=> 'Menu.pm', 
-    'PREREQ_PM'		=> {NumberedTree => 1.0, NumberedTree::DBTree => 1.0}, 
+    'PREREQ_PM'		=> {Tree::Numbered => 1.0, Tree::Numbered::DB => 1.0}, 
     ($] >= 5.005 ?    
       (AUTHOR     => 'Yosef Meller <mellerf@netvision.net.il>') : ()),
 );

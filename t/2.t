@@ -1,37 +1,43 @@
 
-use Test::More tests => 9;
+use Test::More tests => 19;
+BEGIN { use_ok('Tree::Numbered') };
 
-BEGIN {use_ok('NumberedTree') };
-BEGIN {use_ok('Javascript::Menu') };
+my $tree = Tree::Numbered->new(Place => 'Root', Status => 'superman');
+ok ($tree, "constructor");
+ok (!$tree->hasField('Value'), "Value not created");
 
-my $max_level = 0;
+my $child = $tree->append(Place => "First", Status => 'ok');
+ok ($child, "append");
+is ($tree, $child->getParentRef, "parent assignment");
 
-my $tree = NumberedTree->new('Root');
-my $child = $tree->append("First");
-$tree->append("Second");
-$child->append("First child");
+my @fields = $child->getFieldNames;
+my @want_fields = ('Place', 'Status');
+ok (eq_set(\@fields, \@want_fields), "Fields ok");
+ok ($child->getField('Place') eq 'First', "getField works");
+$child->setField('Place', '#1');
+ok ($child->getField('Place') eq '#1', "setField works");
 
- my $action = sub {
-    my $self = shift;
-    my ($level, $unique) = @_;
-    
-    if ($level > $max_level) {$max_level = $level}
-    my $value = $self->getValue;
-    return "caption_${unique}.innerHTML='$value'";
-  };
+my $secChild;
+ok ($secChild = $tree->append(), "no fields");
+ok ($secChild->getField('Place') eq 'Root', "field inheritance");
+ok (!$tree->hasField('Value'), "Value not created when no params");
 
-Javascript::Menu->convert(tree => $tree, action => $action, legacy_encoding => 1);
-isa_ok($tree, "Javascript::Menu", "convert");
+ok ($secChild = $child->append("First child"), "deep append");
+ok ($secChild->hasField('Value'), "Value auto-created");
 
-ok($child = $tree->append("Something", '0'), "appending");
-is ($child->getAction, $tree->getAction, "assigning default action");
-isnt($child->getUniqueId, $tree->getUniqueId, "UniqueId is different");
+my $cloned = $tree->clone;
+isa_ok($cloned, "Tree::Numbered", "cloning");
+isn't ($tree, $cloned->nextNode->getParentRef, "parent assignment in cloning 1");
+is ($cloned, $cloned->nextNode->getParentRef, "parent assignment in cloning 2");
 
-my @lines = $tree->getHTML;
-is ($#lines, $max_level + 1, "all HTML produced");
+@ch1 = sort $cloned->listChildNumbers;
+@ch2 = sort $tree->listChildNumbers;
+ok(eq_set(\@ch1, \@ch2), "cloning and descendants");
+isnt ($cloned->getLuckyNumber, $tree->getLuckyNumber, "lucky numbers are different");
 
-@lines = grep /<a.*>/, @lines;
-is ($#lines, $max_level, "IE6 compatible code.");
+$tree->addField('Special', 'not special');
+ok ($tree->getSpecial eq 'not special', "Autoloading and adding fields");
 
-@lines = grep {/<a>/} $tree->getHTML(no_ie => 'i wish');
-is ($#lines, -1, "IE6 incompatible code.");
+# For more info:
+# use Data::Dumper;
+# print Dumper($tree);
