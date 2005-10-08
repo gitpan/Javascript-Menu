@@ -8,9 +8,12 @@ Revision history for Perl module Javascript::Menu.
 	- Removed the useBytes stuff. Useless.
 	- Added support for highlighting selected item.
 
-2.00 Fri Oct 31
+2.00 Fri Oct 31 2003
 	- Everything uses Tree::Numbered::*
 	- Support for simple navigational menus.
 
-2.01 Wed Apr 7
+2.01 Wed Apr 7 2004
 	- Added IE5 support in the JS code.
+
+2.02 Sat Oct 8 2005
+	- Menu timing no longer hard-coded.

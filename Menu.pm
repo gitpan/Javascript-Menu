@@ -9,7 +9,7 @@ use constant DEFAULT_STYLES => {caption => 'caption',
 				Mmenu => 'Mmenu', 
 				Smenu => 'Smenu'};
 
-our $VERSION = '2.01';
+our $VERSION = '2.02';
 our @ISA = qw(Tree::Numbered);
 
 # package stuff:
@@ -354,12 +354,15 @@ sub buildCSS {
 
 # <baseJS> generates required Javascript code for use with this module.
 # Arguments: $rtl - if right-to-left menu.
+#            $menu_delay - option to manually set microseconds of delay
+#                          before a menu closes. Default is 500ms.
 # Returns: Only the code. You can put this inside a <script> tag or print
 #          to a .js file.
 
 sub baseJS {
     my $self = shift; # Never used.
     my $rtl = shift;
+    my $menu_delay  = shift || 500;
 
     my ($place, $right_anchor, $right_anchor_mo);
     if ($rtl) {
@@ -421,7 +424,7 @@ function outOfMenu() {
 		isCollapsing = false;
 	}
 
-	collapseMenusTimer = setTimeout("hideMenus(0)",500);
+	collapseMenusTimer = setTimeout("hideMenus(0)", $menu_delay);
 	isCollapsing = true;
 }
 
@@ -572,7 +575,7 @@ Every part of the menu is associated with a class name, that defines its style (
 
 =head2 Setting up the supporting code
 
-Javascript::Menu requires some supporting code to work. First, as implied by its name, certain Javascript functions must be available. This is, however, the easiest thing to set up. The code is returned in its entirety, as one gigant multiline string, by the class method I<baseJS> (see below). use this in your head tag, or do like me and dump this to a .js file.
+Javascript::Menu requires some supporting code to work. First, as implied by its name, certain Javascript functions must be available. This is, however, the easiest thing to set up. The code is returned in its entirety, as one giant multiline string, by the class method I<baseJS> (see below). use this in your head tag, or do like me and dump this to a .js file.
 
 The second thing that needs to be set up is the CSS. except for a few settings, you are pretty free to style the menu as you see fit, but that also means some work for you. The class method I<baseCSS> returns only the basic settings, those you can't change. You must tweak it some more to look good. The class method I<reasonableCSS> returns some example CSS that doesn't look too bad. Again, you should tweak this as described below under I<buildCSS>. 
 
@@ -702,9 +705,9 @@ The following class methods help you generate supporting code for your menus:
 
 =over 4
 
-=item baseJS ($rtl)
+=item baseJS ($rtl, $menu_delay)
 
-Returns the basic Javascript code for use with this module. If the optional $rtl is true, the code will generate right-to-left menus.
+Returns the basic Javascript code for use with this module. If the optional $rtl is true, the code will generate right-to-left menus. $menu_delay allows you to set the time (in miliseconds) that a submenu stays open when the mouse is not hovering above it. The default is 500ms (0.5 seconds).
 
 =item baseCSS
 
